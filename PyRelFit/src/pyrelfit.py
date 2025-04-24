@@ -7,6 +7,19 @@ import os
 PARENT_TMP_DIR = "ref_tmp"
 CHILD_TMP_DIR = "test_tmp"
 
+def remove_dir_recursive(path):
+    """
+    Removes all files and directories recursively from given path.
+    """
+    if not os.path.exists(path):
+        return
+
+    for root, dirs, files in os.walk(path, topdown=False):
+        for file in files:
+            os.remove(os.path.join(root, file))
+        for dir in dirs:
+            os.rmdir(os.path.join(root, dir))
+    os.rmdir(path)
 
 def passes_filter(row):
     """
@@ -167,11 +180,15 @@ def merge_all_chromosomes(parent_tmp_dir, child_tmp_dir, total_parent, total_chi
 @click.option('--input-test', help='Test generation input file.')
 @click.option('--input-ref', help='Reference generation input file.')
 @click.option('--out-dir', default='results', help='Directory for output files.')
-@click.option('--temp-dir', default='tmp', help='Directory for temp files.')
+@click.option('--temp-dir', default='tmp', help='Directory for temporary files.')
 @click.option('--generate-graphics', default=False, help='Generates graphics for each chromosome.')
+@click.option('--keep-temp', default=False, help='Do not delete temporary files.')
 
-def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics):
-    """Tool used to calculate relative fitness of SNP mutations.\n note: data must be (Chr, Pos) sorted"""
+def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics, keep_temp):
+    """
+    Tool used to calculate relative fitness of SNP mutations.\n
+    note: data must be (Chr, Pos) sorted
+    """
 
     # get current time
     start_time = time.time()
@@ -180,7 +197,7 @@ def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics):
     child_tmp_dir = temp_dir + '/' + CHILD_TMP_DIR
 
     if generate_graphics:
-        print('Not implemented.')
+        print('Graphics not implemented.')
 
     print("Processing parent file...")
     total_parent = group_and_count(input_ref, parent_tmp_dir)
@@ -192,6 +209,10 @@ def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics):
 
     print("Merging chromosome-specific files and computing relative fitness...")
     merge_all_chromosomes(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir)
+
+    if not keep_temp:
+        print("Deleting temporary files...")
+        remove_dir_recursive(temp_dir)
 
     duration = time.time() - start_time
     print("Done in ", duration, " seconds.")
