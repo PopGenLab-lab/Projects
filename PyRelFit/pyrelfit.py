@@ -2,10 +2,14 @@ import time
 import click
 import csv
 import os
+import matplotlib.pyplot as plt
 
 # --- Settings for temporary files ---
 PARENT_TMP_DIR = "ref_tmp"
 CHILD_TMP_DIR = "test_tmp"
+COUNT_COL = 13
+GRAPHICS_OPACITY = 1
+GRAPHICS_POINT_SIZE = 1
 
 def remove_dir_recursive(path):
     """
@@ -37,7 +41,7 @@ def passes_filter(row):
 
 
 def group_and_count(input_filepath, tmp_dir):
-    """
+    """CHUNK_SIZE
     Process an input file (parents or children):
       - Filter rows based on passes_filter.
       - Add the global total_count.
@@ -66,7 +70,7 @@ def group_and_count(input_filepath, tmp_dir):
                 # End is not needed here (and equals start after filtering)
                 ref = row[3]
                 alt = row[4]
-                count = int(row[13])
+                count = int(row[COUNT_COL])
             except Exception as e:
                 print('Row error:', e, '\nAt: chr ', row[0], ' start ', row[1], ' ref ', row[3], ' alt ', row[4])
                 continue  # skip problematic rows
@@ -93,7 +97,7 @@ def group_and_count(input_filepath, tmp_dir):
     return total_count
 
 
-def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_parent, total_child, out_dir):
+def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_parent, total_child, out_dir, generate_graphics):
     """
     For a given chromosome, open the parent's and child's temporary files,
     read them row by row (they are assumed to be sorted by Start)
@@ -105,6 +109,8 @@ def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_pare
 
     Then, output a CSV file (named <chr_val>.csv) in out_dir with columns:
       Start, Ref, Alt, Relative_Fitness
+
+    Optionally: generate a plot for given chromosome.
     """
     parent_file = open(parent_tmp_filepath, "r")
     child_file = open(child_tmp_filepath, "r")
@@ -118,9 +124,15 @@ def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_pare
     # Output file (one per chromosome)
     os.makedirs(out_dir, exist_ok=True)
     out_filepath = os.path.join(out_dir, f"{chr_val}.csv")
+
     with open(out_filepath, "w", newline="") as outfile:
         writer = csv.writer(outfile, delimiter="\t")
         writer.writerow(["Start", "Ref", "Alt", "Relative_Fitness"])
+
+        if generate_graphics:
+            x_chunk, y_chunk = [], []   # using temporary arrays saves a lot of cycles,
+                                        # because of val -> [val] overhead is greater than [].append(val)
+            fig, ax = plt.subplots(figsize=(20, 10))
 
         # Using the assumption that each key (Start, Ref, Alt) exists in both files,
         # We simply iterate record by record.
@@ -130,8 +142,6 @@ def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_pare
                 ref = p_row[1]
                 alt = p_row[2]
                 parent_count = int(p_row[3])
-
-                # For child's file.
                 child_count = int(c_row[3])
             except Exception as e:
                 continue  # skip if conversion fails
@@ -140,21 +150,36 @@ def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_pare
             parent_freq = parent_count / total_parent
             child_freq = child_count / total_child
 
+            # Avoid division by zero: if parent_ratio is zero, use denovo rate
             parent_freq = 1e-8 if parent_freq == 0 else parent_freq
 
-            # Avoid division by zero: if parent_ratio is zero, use denovo rate
             relative_fitness = child_freq**2 / ((parent_freq**2 + parent_freq**3) - (parent_freq * child_freq**2))
 
+            if generate_graphics:
+                y_chunk.append(relative_fitness)
+                x_chunk.append(start)
+
             writer.writerow([start, ref, alt, relative_fitness])
+
+    if generate_graphics:
+        if x_chunk:
+            ax.scatter(x_chunk, y_chunk, s=GRAPHICS_POINT_SIZE, alpha=GRAPHICS_OPACITY, c='blue')
+
+        ax.set_xlabel("Position in chromosome, bp")
+        ax.set_ylabel("Relative fitness")
+        ax.set_title(chr_val)
+        plt.savefig(os.path.join(out_dir, f"{chr_val}_plot.png"), dpi=300)
+        plt.close(fig)
 
     parent_file.close()
     child_file.close()
 
 
-def merge_all_chromosomes(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir="output"):
+def merge_and_compute(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir="output", generate_graphics=False):
     """
     For every chromosome that exists in both temporary directories,
     merge the parent's and child's records to compute relative fitness.
+    Optionally, generate a plot for each chromosome.
     """
     parent_chrs = set(os.listdir(parent_tmp_dir))
     child_chrs = set(os.listdir(child_tmp_dir))
@@ -171,7 +196,7 @@ def merge_all_chromosomes(parent_tmp_dir, child_tmp_dir, total_parent, total_chi
         parent_tmp_path = os.path.join(parent_tmp_dir, tmp_filename)
         child_tmp_path = os.path.join(child_tmp_dir, tmp_filename)
         print(f"Merging records for chromosome {chr_val}...")
-        merge_chr_files(chr_val, parent_tmp_path, child_tmp_path, total_parent, total_child, out_dir)
+        merge_chr_files(chr_val, parent_tmp_path, child_tmp_path, total_parent, total_child, out_dir, generate_graphics)
     print(f"All output files are saved in the '{out_dir}' directory.")
 
 
@@ -196,9 +221,6 @@ def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics, keep_te
     parent_tmp_dir = temp_dir + '/' + PARENT_TMP_DIR
     child_tmp_dir = temp_dir + '/' + CHILD_TMP_DIR
 
-    if generate_graphics:
-        print('Graphics not implemented.')
-
     print("Processing parent file...")
     total_parent = group_and_count(input_ref, parent_tmp_dir)
     print(f"Total parent count: {total_parent}")
@@ -208,7 +230,7 @@ def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics, keep_te
     print(f"Total child count: {total_child}")
 
     print("Merging chromosome-specific files and computing relative fitness...")
-    merge_all_chromosomes(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir)
+    merge_and_compute(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir, generate_graphics)
 
     if not keep_temp:
         print("Deleting temporary files...")
