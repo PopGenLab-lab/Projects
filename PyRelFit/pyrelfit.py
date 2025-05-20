@@ -51,20 +51,20 @@ def compute_counts(variant):
 
     return alt_count, total
 
-
 def filter_and_split(vcf_path, generations, temp_dir, cores):
     vcf = VCF(vcf_path, threads=cores)
     gens = parse_generations(vcf.samples, generations)
 
     for gen in generations:
-        vcf = VCF(vcf_path, samples=gens.get(gen))
+        vcf = VCF(vcf_path, threads=cores, samples=gens.get(gen))
         for variant in vcf:
             if not variant.is_snp: continue
+            if not variant.ALT: continue
 
             chrom = variant.CHROM
             pos = variant.POS
             ref = variant.REF
-            alt = variant.ALT[0] if variant.ALT else "."
+            alt = variant.ALT[0]
 
             alt_count, total = compute_counts(variant)
             with open(f"{temp_dir}/tmp.{chrom}.{gen}.csv", "a") as f:
