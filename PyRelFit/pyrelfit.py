@@ -1,15 +1,17 @@
+import glob
 import time
 import click
 import csv
 import os
 import matplotlib.pyplot as plt
+from cyvcf2 import VCF
+from multiprocessing import Pool
+from collections import defaultdict
 
 # --- Settings for temporary files ---
-PARENT_TMP_DIR = "ref_tmp"
-CHILD_TMP_DIR = "test_tmp"
-COUNT_COL = 13
-GRAPHICS_OPACITY = 1
-GRAPHICS_POINT_SIZE = 1
+GRAPHICS_OPACITY = 0.6
+GRAPHICS_POINT_SIZE = 4
+GRAPHICS_ENABLED = False
 
 def remove_dir_recursive(path):
     """
@@ -25,212 +27,156 @@ def remove_dir_recursive(path):
             os.rmdir(os.path.join(root, dir))
     os.rmdir(path)
 
-def passes_filter(row):
-    """
-    Returns True if the row meets these criteria:
-      - Start equals End.
-      - Neither Ref nor Alt equals '-'.
-    Assumes CSV columns: Chr, Start, End, Ref, Alt, Count.
-    """
-    try:
-        start = int(row[1])
-        end = int(row[2])
-    except ValueError:
-        return False  # ignore header or malformed rows
-    return (row[1] == row[2]) and (row[3] != '-') and (row[4] != '-')
+def list_to_dict_max(lst):
+    max_dict = {}
+    for value, key in lst:
+        max_dict[key] = max(max_dict.get(key, -float('inf')), value)
+    return max_dict
+
+def parse_generations(samples, generations):
+    groups = defaultdict(list)
+    for sample in samples:
+        try:
+            gen = sample.split("-")[-1]
+            if gen in generations:
+                groups[gen].append(sample)
+        except IndexError:
+            pass
+    return dict(groups)
 
 
-def group_and_count(input_filepath, tmp_dir):
-    """CHUNK_SIZE
-    Process an input file (parents or children):
-      - Filter rows based on passes_filter.
-      - Add the global total_count.
-      - Write each record into a temporary CSV file grouped by chromosome.
+def compute_counts(variant):
+    total = variant.num_called * 2
+    alt_count = variant.num_het + variant.num_hom_alt * 2
 
-    Files are written in tmp_dir, one file per chromosome.
-    Each temporary file will have columns: Start, Ref, Alt, Count.
-    Returns total_count across all chromosomes.
-    """
-    # Make sure the temporary directory exists.
-    os.makedirs(tmp_dir, exist_ok=True)
+    return alt_count, total
 
-    total_count = 0
-    tmp_writers = {}
-    tmp_files = {}
 
-    with open(input_filepath, "r") as infile:
-        reader = csv.reader(infile, delimiter="\t")
-        header = next(reader, None)  # skip header
+def filter_and_split(vcf_path, generations, temp_dir):
+    vcf = VCF(vcf_path)
+    gens = parse_generations(vcf.samples, generations)
+
+    for gen in generations:
+        vcf = VCF(vcf_path, samples=gens.get(gen))
+        for variant in vcf:
+            if not variant.is_snp: continue
+
+            chrom = variant.CHROM
+            pos = variant.POS
+            ref = variant.REF
+            alt = variant.ALT[0] if variant.ALT else "."
+
+            alt_count, total = compute_counts(variant)
+            with open(f"{temp_dir}/tmp.{chrom}.{gen}.csv", "a") as f:
+                csv.writer(f).writerow([pos, ref, alt, alt_count, total])
+
+
+def process_pair(args):
+    chrom, pair, temp_dir, out_dir = args
+    gen1, gen2 = pair.split("_")
+    max_w = 0.0
+
+    with (open(f"{temp_dir}/tmp.{chrom}.{gen1}.csv") as f1,
+          open(f"{temp_dir}/tmp.{chrom}.{gen2}.csv") as f2,
+          open(f"{out_dir}/{chrom}.{pair}.csv", "w") as out):
+        writer = csv.writer(out)
+        writer.writerow(["Pos", "Ref", "Alt", "RF"])
+
+        for (r1, r2) in zip(csv.reader(f1), csv.reader(f2)):
+            pos, ref, alt = r1[:3]
+            ac1, total1 = map(int, r1[3:])
+            ac2, total2 = map(int, r2[3:])
+
+            f1 = ac1 / total1 if total1 else 0
+            f2 = ac2 / total2 if total2 and total2 != 0 else 1e-8
+
+            w = (f2 ** 2) / (2 * f1 ** 2 - f1 * f2 ** 2) if f1 != 0 else 0
+            max_w = max(max_w, w)
+
+            writer.writerow([pos, ref, alt, w])
+
+    return max_w, pair
+
+
+def merge_and_compute(generation_pairs, cores, temp_dir, out_dir):
+    chromosomes = {f.split(".")[1] for f in glob.glob(f"{temp_dir}/tmp.*.{generation_pairs[0].split('_')[0]}.csv")}
+    tasks = [(c, p, temp_dir, out_dir) for c in chromosomes for p in generation_pairs]
+
+    with Pool(processes=cores) as pool:
+        max_vals = pool.map(process_pair, tasks)
+    # MAX should be per generation_pair
+    return list_to_dict_max(max_vals)
+
+
+def normalize_file(filename, global_max):
+    if global_max == 0 or global_max == 1: return
+
+    with open(filename) as f_in, open(f"{filename}.tmp", "w") as f_out:
+        reader = csv.reader(f_in)
+        writer = csv.writer(f_out)
+        header = next(reader)
+        writer.writerow(header)
+
+        x_vals = []
+        y_vals = []
+
         for row in reader:
-            if not passes_filter(row):
-                continue
-            try:
-                chr_val = row[0]
-                start = int(row[1])
-                # End is not needed here (and equals start after filtering)
-                ref = row[3]
-                alt = row[4]
-                count = int(row[COUNT_COL])
-            except Exception as e:
-                print('Row error:', e, '\nAt: chr ', row[0], ' start ', row[1], ' ref ', row[3], ' alt ', row[4])
-                continue  # skip problematic rows
+            row[-1] = float(row[-1]) / global_max
+            if GRAPHICS_ENABLED:
+                x_vals.append(float(row[0]))
+                y_vals.append(row[-1])
 
-            total_count += count
+            writer.writerow(row)
 
-            # Open a temporary writer for this chromosome if not already.
-            if chr_val not in tmp_writers:
-                tmp_filename = os.path.join(tmp_dir, f"{chr_val}.csv")
-                tmp_file = open(tmp_filename, "w", newline="")
-                writer = csv.writer(tmp_file)
-                # Write header for later clarity (could be omitted if desired)
-                writer.writerow(["Start", "Ref", "Alt", "Count"])
-                tmp_writers[chr_val] = writer
-                tmp_files[chr_val] = tmp_file
+        if GRAPHICS_ENABLED:
+            png_filename = os.path.splitext(filename)[0]
 
-            # Write record (only needed fields).
-            tmp_writers[chr_val].writerow([start, ref, alt, count])
+            plt.figure(figsize=(16, 9))
+            plt.scatter(x_vals, y_vals, alpha=GRAPHICS_OPACITY, s=GRAPHICS_POINT_SIZE)
+            plt.title("Normalized Data Plot")
+            plt.xlabel("Position in Chr")
+            plt.ylabel("Relative fitness")
+            plt.ylim(0, 1)
+            plt.savefig(f"{png_filename}.png")
+            plt.close()
 
-    # Close all temporary files.
-    for f in tmp_files.values():
-        f.close()
-
-    return total_count
+    os.replace(f"{filename}.tmp", filename)
 
 
-def merge_chr_files(chr_val, parent_tmp_filepath, child_tmp_filepath, total_parent, total_child, out_dir, generate_graphics):
-    """
-    For a given chromosome, open the parent's and child's temporary files,
-    read them row by row (they are assumed to be sorted by Start)
-    and compute the relative fitness per record using:
+def normalise(scale_list, generation_pairs, cores, out_dir):
+    files = []
 
-      parent_ratio = parent_count / total_parent
-      child_ratio = child_count / total_child
-      relative_fitness = child_ratio / parent_ratio
+    for pair in generation_pairs:
+        files.extend([(s,pair) for s in glob.glob(f"{out_dir}/*.{pair}.csv")])
 
-    Then, output a CSV file (named <chr_val>.csv) in out_dir with columns:
-      Start, Ref, Alt, Relative_Fitness
-
-    Optionally: generate a plot for given chromosome.
-    """
-    parent_file = open(parent_tmp_filepath, "r")
-    child_file = open(child_tmp_filepath, "r")
-    parent_reader = csv.reader(parent_file)
-    child_reader = csv.reader(child_file)
-
-    # Skip header rows
-    next(parent_reader, None)
-    next(child_reader, None)
-
-    # Output file (one per chromosome)
-    os.makedirs(out_dir, exist_ok=True)
-    out_filepath = os.path.join(out_dir, f"{chr_val}.csv")
-
-    with open(out_filepath, "w", newline="") as outfile:
-        writer = csv.writer(outfile, delimiter="\t")
-        writer.writerow(["Start", "Ref", "Alt", "Relative_Fitness"])
-
-        if generate_graphics:
-            x_chunk, y_chunk = [], []   # using temporary arrays saves a lot of cycles,
-                                        # because of val -> [val] overhead is greater than [].append(val)
-            fig, ax = plt.subplots(figsize=(20, 10))
-
-        # Using the assumption that each key (Start, Ref, Alt) exists in both files,
-        # We simply iterate record by record.
-        for p_row, c_row in zip(parent_reader, child_reader):
-            try:
-                start = int(p_row[0])
-                ref = p_row[1]
-                alt = p_row[2]
-                parent_count = int(p_row[3])
-                child_count = int(c_row[3])
-            except Exception as e:
-                continue  # skip if conversion fails
-
-            # Compute normalized ratios.
-            parent_freq = parent_count / total_parent
-            child_freq = child_count / total_child
-
-            # Avoid division by zero: if parent_ratio is zero, use denovo rate
-            parent_freq = 1e-8 if parent_freq == 0 else parent_freq
-
-            relative_fitness = child_freq**2 / ((parent_freq**2 + parent_freq**3) - (parent_freq * child_freq**2))
-
-            if generate_graphics:
-                y_chunk.append(relative_fitness)
-                x_chunk.append(start)
-
-            writer.writerow([start, ref, alt, relative_fitness])
-
-    if generate_graphics:
-        if x_chunk:
-            ax.scatter(x_chunk, y_chunk, s=GRAPHICS_POINT_SIZE, alpha=GRAPHICS_OPACITY, c='blue')
-
-        ax.set_xlabel("Position in chromosome, bp")
-        ax.set_ylabel("Relative fitness")
-        ax.set_title(chr_val)
-        plt.savefig(os.path.join(out_dir, f"{chr_val}_plot.png"), dpi=300)
-        plt.close(fig)
-
-    parent_file.close()
-    child_file.close()
-
-
-def merge_and_compute(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir="output", generate_graphics=False):
-    """
-    For every chromosome that exists in both temporary directories,
-    merge the parent's and child's records to compute relative fitness.
-    Optionally, generate a plot for each chromosome.
-    """
-    parent_chrs = set(os.listdir(parent_tmp_dir))
-    child_chrs = set(os.listdir(child_tmp_dir))
-
-    common_chrs = parent_chrs.intersection(child_chrs)
-
-    if not common_chrs:
-        print("No common chromosomes found in both files.")
-        return
-
-    for tmp_filename in common_chrs:
-        # tmp_filename is something like "chr1.csv". Extract the chromosome label.
-        chr_val = os.path.splitext(tmp_filename)[0]
-        parent_tmp_path = os.path.join(parent_tmp_dir, tmp_filename)
-        child_tmp_path = os.path.join(child_tmp_dir, tmp_filename)
-        print(f"Merging records for chromosome {chr_val}...")
-        merge_chr_files(chr_val, parent_tmp_path, child_tmp_path, total_parent, total_child, out_dir, generate_graphics)
-    print(f"All output files are saved in the '{out_dir}' directory.")
-
+    with Pool(processes=cores) as pool:
+        pool.starmap(normalize_file, [(f, scale_list.get(p)) for f, p in files])
 
 
 @click.command()
-@click.option('--input-test', help='Test generation input file.')
-@click.option('--input-ref', help='Reference generation input file.')
-@click.option('--out-dir', default='results', help='Directory for output files.')
-@click.option('--temp-dir', default='tmp', help='Directory for temporary files.')
-@click.option('--generate-graphics', default=False, help='Generates graphics for each chromosome.')
+@click.option('-i', '--input-file', help='Input VCF file.')
+@click.option('-c', '--cores', default=1, help='Number of processes to spawn.')
+@click.option('-g', '--generations', type=list, default=['1', '2', '3'], help='Sample generations.')
+@click.option('-p', '--generation-pairs', type=list, default=['1_3', '2_3'], help='Sample generation pairs.')
+@click.option('-o', '--out-dir', default='results', help='Directory for output files.')
+@click.option('-t', '--temp-dir', default='tmp', help='Directory for temporary files.')
+@click.option('-G', '--generate-graphics', default=False, help='Generates graphics for each chromosome.')
 @click.option('--keep-temp', default=False, help='Do not delete temporary files.')
-
-def pyrelfit(input_test, input_ref, out_dir, temp_dir,generate_graphics, keep_temp):
+def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir, keep_temp, generate_graphics):
     """
     Tool used to calculate relative fitness of SNP mutations.\n
-    note: data must be (Chr, Pos) sorted
     """
+    global GRAPHICS_ENABLED
+    GRAPHICS_ENABLED = generate_graphics
 
     # get current time
     start_time = time.time()
 
-    parent_tmp_dir = temp_dir + '/' + PARENT_TMP_DIR
-    child_tmp_dir = temp_dir + '/' + CHILD_TMP_DIR
 
-    print("Processing parent file...")
-    total_parent = group_and_count(input_ref, parent_tmp_dir)
-    print(f"Total parent count: {total_parent}")
-
-    print("Processing child file...")
-    total_child = group_and_count(input_test, child_tmp_dir)
-    print(f"Total child count: {total_child}")
-
-    print("Merging chromosome-specific files and computing relative fitness...")
-    merge_and_compute(parent_tmp_dir, child_tmp_dir, total_parent, total_child, out_dir, generate_graphics)
+    os.makedirs(temp_dir, exist_ok=True)
+    filter_and_split(input_file, generations, temp_dir)
+    scale_list = merge_and_compute(generation_pairs, cores, temp_dir, out_dir)
+    normalise(scale_list, generation_pairs, cores, out_dir)
 
     if not keep_temp:
         print("Deleting temporary files...")
