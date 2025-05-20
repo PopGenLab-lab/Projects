@@ -76,26 +76,26 @@ def process_pair(args):
     gen1, gen2 = pair.split("_")
     max_w = 0.0
 
-    with (open(f"{temp_dir}/tmp.{chrom}.{gen1}.csv") as f1,
-          open(f"{temp_dir}/tmp.{chrom}.{gen2}.csv") as f2,
-          open(f"{out_dir}/{chrom}.{pair}.csv", "w") as out):
-        writer = csv.writer(out)
-        writer.writerow(["Pos", "Ref", "Alt", "RF"])
+    with open(f"{temp_dir}/tmp.{chrom}.{gen1}.csv") as f1:
+        with open(f"{temp_dir}/tmp.{chrom}.{gen2}.csv") as f2:
+            with open(f"{out_dir}/{chrom}.{pair}.csv", "w") as out:
+                writer = csv.writer(out)
+                writer.writerow(["Pos", "Ref", "Alt", "RF"])
 
-        for (r1, r2) in zip(csv.reader(f1), csv.reader(f2)):
-            pos, ref, alt = r1[:3]
-            ac1, total1 = map(int, r1[3:])
-            ac2, total2 = map(int, r2[3:])
+                for (r1, r2) in zip(csv.reader(f1), csv.reader(f2)):
+                    pos, ref, alt = r1[:3]
+                    ac1, total1 = map(int, r1[3:])
+                    ac2, total2 = map(int, r2[3:])
 
-            f1 = ac1 / total1 if total1 else 0
-            f2 = ac2 / total2 if total2 and total2 != 0 else 1e-8
+                    f1 = ac1 / total1 if total1 else 0
+                    f2 = ac2 / total2 if total2 and total2 != 0 else 1e-8
 
-            w = (f2 ** 2) / (2 * f1 ** 2 - f1 * f2 ** 2) if f1 != 0 else 0
-            max_w = max(max_w, w)
+                    w = (f2 ** 2) / (2 * f1 ** 2 - f1 * f2 ** 2) if f1 != 0 else 0
+                    max_w = max(max_w, w)
 
-            writer.writerow([pos, ref, alt, w])
+                    writer.writerow([pos, ref, alt, w])
 
-    return max_w, pair
+            return max_w, pair
 
 
 def merge_and_compute(generation_pairs, cores, temp_dir, out_dir):
@@ -111,36 +111,37 @@ def merge_and_compute(generation_pairs, cores, temp_dir, out_dir):
 def normalize_file(filename, global_max):
     if global_max == 0 or global_max == 1: return
 
-    with open(filename) as f_in, open(f"{filename}.tmp", "w") as f_out:
-        reader = csv.reader(f_in)
-        writer = csv.writer(f_out)
-        header = next(reader)
-        writer.writerow(header)
+    with open(filename) as f_in:
+        with open(f"{filename}.tmp", "w") as f_out:
+            reader = csv.reader(f_in)
+            writer = csv.writer(f_out)
+            header = next(reader)
+            writer.writerow(header)
 
-        x_vals = []
-        y_vals = []
+            x_vals = []
+            y_vals = []
 
-        for row in reader:
-            row[-1] = float(row[-1]) / global_max
+            for row in reader:
+                row[-1] = float(row[-1]) / global_max
+                if GRAPHICS_ENABLED:
+                    x_vals.append(float(row[0]))
+                    y_vals.append(row[-1])
+
+                writer.writerow(row)
+
             if GRAPHICS_ENABLED:
-                x_vals.append(float(row[0]))
-                y_vals.append(row[-1])
+                png_filename = os.path.splitext(filename)[0]
 
-            writer.writerow(row)
+                plt.figure(figsize=(16, 9))
+                plt.scatter(x_vals, y_vals, alpha=GRAPHICS_OPACITY, s=GRAPHICS_POINT_SIZE)
+                plt.title("Normalized Data Plot")
+                plt.xlabel("Position in Chr")
+                plt.ylabel("Relative fitness")
+                plt.ylim(0, 1)
+                plt.savefig(f"{png_filename}.png")
+                plt.close()
 
-        if GRAPHICS_ENABLED:
-            png_filename = os.path.splitext(filename)[0]
-
-            plt.figure(figsize=(16, 9))
-            plt.scatter(x_vals, y_vals, alpha=GRAPHICS_OPACITY, s=GRAPHICS_POINT_SIZE)
-            plt.title("Normalized Data Plot")
-            plt.xlabel("Position in Chr")
-            plt.ylabel("Relative fitness")
-            plt.ylim(0, 1)
-            plt.savefig(f"{png_filename}.png")
-            plt.close()
-
-    os.replace(f"{filename}.tmp", filename)
+        os.replace(f"{filename}.tmp", filename)
 
 
 def normalise(scale_list, generation_pairs, cores, out_dir):
@@ -174,6 +175,7 @@ def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir
 
 
     os.makedirs(temp_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     filter_and_split(input_file, generations, temp_dir)
     scale_list = merge_and_compute(generation_pairs, cores, temp_dir, out_dir)
     normalise(scale_list, generation_pairs, cores, out_dir)
