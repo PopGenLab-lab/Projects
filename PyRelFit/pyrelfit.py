@@ -52,8 +52,8 @@ def compute_counts(variant):
     return alt_count, total
 
 
-def filter_and_split(vcf_path, generations, temp_dir):
-    vcf = VCF(vcf_path)
+def filter_and_split(vcf_path, generations, temp_dir, cores):
+    vcf = VCF(vcf_path, threads=cores)
     gens = parse_generations(vcf.samples, generations)
 
     for gen in generations:
@@ -176,7 +176,7 @@ def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir
 
     os.makedirs(temp_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
-    filter_and_split(input_file, generations, temp_dir)
+    filter_and_split(input_file, generations, temp_dir, cores)
     scale_list = merge_and_compute(generation_pairs, cores, temp_dir, out_dir)
     normalise(scale_list, generation_pairs, cores, out_dir)
 
