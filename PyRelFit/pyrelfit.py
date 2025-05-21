@@ -51,24 +51,30 @@ def compute_counts(variant):
 
     return alt_count, total
 
-def filter_and_split(vcf_path, generations, temp_dir, cores):
-    vcf = VCF(vcf_path, threads=cores)
-    gens = parse_generations(vcf.samples, generations)
+def filter_split_unit(vcf_path, chrom, gen, samples, temp_dir):
+    vcf = VCF(vcf_path, samples=samples)
 
-    for gen in generations:
-        vcf = VCF(vcf_path, threads=cores, samples=gens.get(gen))
-        for variant in vcf:
+    with open(f"{temp_dir}/tmp.{chrom}.{gen}.csv", "a") as f:
+        for variant in vcf(chrom):
             if not variant.is_snp: continue
             if not variant.ALT: continue
 
-            chrom = variant.CHROM
             pos = variant.POS
             ref = variant.REF
             alt = variant.ALT[0]
 
             alt_count, total = compute_counts(variant)
-            with open(f"{temp_dir}/tmp.{chrom}.{gen}.csv", "a") as f:
-                csv.writer(f).writerow([pos, ref, alt, alt_count, total])
+
+            csv.writer(f).writerow([pos, ref, alt, alt_count, total])
+
+def filter_and_split(vcf_path, generations, temp_dir, cores):
+    vcf = VCF(vcf_path, threads=cores)
+    chromosomes = vcf.seqnames
+    gens = parse_generations(vcf.samples, generations)
+
+    tasks = [(vcf_path, c, gen, gens[gen], temp_dir) for c in chromosomes for gen in gens.keys()]
+    with Pool(processes=cores) as pool:
+        pool.starmap(filter_split_unit, tasks)
 
 
 def process_pair(args):
@@ -90,7 +96,7 @@ def process_pair(args):
                     f1 = ac1 / total1 if total1 else 0
                     f2 = ac2 / total2 if total2 and total2 != 0 else 1e-8
 
-                    w = (f2 ** 2) / (2 * f1 ** 2 - f1 * f2 ** 2) if f1 != 0 else 0
+                    w = (f2 ** 2) / (2 * f1 ** 2 - f1 * f2 ** 2) if f1 and f1 != 0.0 and f1 != 0 else 0
                     max_w = max(max_w, w)
 
                     writer.writerow([pos, ref, alt, w])
