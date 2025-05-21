@@ -80,7 +80,7 @@ def filter_and_split(vcf_path, generations, temp_dir, cores):
 
     tasks = [(vcf_path, c, gen, gens[gen], temp_dir) for c in chromosomes for gen in gens.keys()]
     with Pool(processes=cores) as pool:
-        pool.imap(filter_split_unit, tasks)
+        pool.map(filter_split_unit, tasks, chunksize=1)
 
 
 def process_pair(args):
@@ -115,7 +115,7 @@ def merge_and_compute(generation_pairs, cores, temp_dir, out_dir):
     tasks = [(c, p, temp_dir, out_dir) for c in chromosomes for p in generation_pairs]
 
     with Pool(processes=cores) as pool:
-        max_vals = pool.imap(process_pair, tasks)
+        max_vals = pool.map(process_pair, tasks, chunksize=1)
     # MAX should be per generation_pair
     return list_to_dict_max(max_vals)
 
@@ -164,7 +164,7 @@ def normalise(scale_list, generation_pairs, cores, out_dir):
         files.extend([(s,pair) for s in glob.glob(f"{out_dir}/*.{pair}.csv")])
 
     with Pool(processes=cores) as pool:
-        pool.imap(normalize_file, [(f, scale_list.get(p)) for f, p in files])
+        pool.map(normalize_file, [(f, scale_list.get(p)) for f, p in files], chunksize=1)
 
 
 @click.command()
