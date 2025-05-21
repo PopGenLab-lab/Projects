@@ -14,6 +14,9 @@ GRAPHICS_OPACITY = 0.6
 GRAPHICS_POINT_SIZE = 4
 GRAPHICS_ENABLED = False
 
+def comma_separated(ctx, param, value):
+    return value.split(',')
+
 def remove_dir_recursive(path):
     """
     Removes all files and directories recursively from given path.
@@ -167,14 +170,15 @@ def normalise(scale_list, generation_pairs, cores, out_dir):
 
     with Pool(processes=cores) as pool:
         pool.map(normalize_file, [(f, scale_list.get(p)) for f, p in files], chunksize=1)
+        pool.close()
 
 
 @click.command()
 @click.option('-i', '--input-file', help='Input VCF file.')
 @click.option('-c', '--cores', default=1, help='Number of processes to spawn.')
-@click.option('-C', '--chromosomes',  help='Chromosomes to analyse.')
-@click.option('-g', '--generations', type=list, default=['1', '2', '3'], help='Sample generations.')
-@click.option('-p', '--generation-pairs', type=list, default=['1_3', '2_3'], help='Sample generation pairs.')
+@click.option('-C', '--chromosomes', callback=comma_separated,  help='Chromosomes to analyse.')
+@click.option('-g', '--generations', callback=comma_separated, default='1,2,3', help='Sample generations.')
+@click.option('-p', '--generation-pairs', callback=comma_separated, default='1_3,2_3', help='Sample generation pairs.')
 @click.option('-o', '--out-dir', default='results', help='Directory for output files.')
 @click.option('-t', '--temp-dir', default='tmp', help='Directory for temporary files.')
 @click.option('-G', '--generate-graphics', default=False, help='Generates graphics for each chromosome.')
