@@ -1,4 +1,5 @@
 import glob
+import sys
 import time
 import click
 import csv
@@ -52,20 +53,24 @@ def compute_counts(variant):
     return alt_count, total
 
 def filter_split_unit(vcf_path, chrom, gen, samples, temp_dir):
-    vcf = VCF(vcf_path, samples=samples)
+    try:
+        vcf = VCF(vcf_path, samples=samples)
 
-    with open(f"{temp_dir}/tmp.{chrom}.{gen}.csv", "a") as f:
-        for variant in vcf(chrom):
-            if not variant.is_snp: continue
-            if not variant.ALT: continue
+        with open(f"{temp_dir}/tmp.{chrom}.{gen}.csv", "a") as f:
+            for variant in vcf(chrom):
+                if not variant.is_snp: continue
+                if not variant.ALT: continue
 
-            pos = variant.POS
-            ref = variant.REF
-            alt = variant.ALT[0]
+                pos = variant.POS
+                ref = variant.REF
+                alt = variant.ALT[0]
 
-            alt_count, total = compute_counts(variant)
+                alt_count, total = compute_counts(variant)
 
-            csv.writer(f).writerow([pos, ref, alt, alt_count, total])
+                csv.writer(f).writerow([pos, ref, alt, alt_count, total])
+    except Exception as e:
+        print(e, file=sys.stderr)
+
 
 def filter_and_split(vcf_path, generations, temp_dir, cores):
     vcf = VCF(vcf_path, threads=cores)
