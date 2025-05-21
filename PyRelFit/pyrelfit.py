@@ -52,7 +52,8 @@ def compute_counts(variant):
 
     return alt_count, total
 
-def filter_split_unit(vcf_path, chrom, gen, samples, temp_dir):
+def filter_split_unit(args):
+    vcf_path, chrom, gen, samples, temp_dir = args
     try:
         vcf = VCF(vcf_path, samples=samples)
 
@@ -79,7 +80,7 @@ def filter_and_split(vcf_path, generations, temp_dir, cores):
 
     tasks = [(vcf_path, c, gen, gens[gen], temp_dir) for c in chromosomes for gen in gens.keys()]
     with Pool(processes=cores) as pool:
-        pool.starmap(filter_split_unit, tasks)
+        pool.imap(filter_split_unit, tasks)
 
 
 def process_pair(args):
@@ -114,12 +115,13 @@ def merge_and_compute(generation_pairs, cores, temp_dir, out_dir):
     tasks = [(c, p, temp_dir, out_dir) for c in chromosomes for p in generation_pairs]
 
     with Pool(processes=cores) as pool:
-        max_vals = pool.map(process_pair, tasks)
+        max_vals = pool.imap(process_pair, tasks)
     # MAX should be per generation_pair
     return list_to_dict_max(max_vals)
 
 
-def normalize_file(filename, global_max):
+def normalize_file(args):
+    filename, global_max = args
     if global_max == 0 or global_max == 1: return
 
     with open(filename) as f_in:
@@ -162,7 +164,7 @@ def normalise(scale_list, generation_pairs, cores, out_dir):
         files.extend([(s,pair) for s in glob.glob(f"{out_dir}/*.{pair}.csv")])
 
     with Pool(processes=cores) as pool:
-        pool.starmap(normalize_file, [(f, scale_list.get(p)) for f, p in files])
+        pool.imap(normalize_file, [(f, scale_list.get(p)) for f, p in files])
 
 
 @click.command()
@@ -188,12 +190,13 @@ def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir
     os.makedirs(temp_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
     filter_and_split(input_file, generations, temp_dir, cores)
+    print("Step 1 in: ", time.time() - start_time, " seconds.")
     scale_list = merge_and_compute(generation_pairs, cores, temp_dir, out_dir)
+    print("Step 2 in: ", time.time() - start_time, " seconds.")
     normalise(scale_list, generation_pairs, cores, out_dir)
 
     if not keep_temp:
         print("Deleting temporary files...")
         remove_dir_recursive(temp_dir)
 
-    duration = time.time() - start_time
-    print("Done in ", duration, " seconds.")
+    print("Done in ", time.time() - start_time, " seconds.")
