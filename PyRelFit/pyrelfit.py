@@ -73,9 +73,11 @@ def filter_split_unit(args):
         print(e, file=sys.stderr)
 
 
-def filter_and_split(vcf_path, generations, temp_dir, cores):
+def filter_and_split(vcf_path, generations, temp_dir, cores, chromosomes=None):
     vcf = VCF(vcf_path, threads=cores)
-    chromosomes = vcf.seqnames
+    # if chromosomes whitelist not provided
+    if not chromosomes:
+        chromosomes = vcf.seqnames
     gens = parse_generations(vcf.samples, generations)
 
     tasks = [(vcf_path, c, gen, gens[gen], temp_dir) for c in chromosomes for gen in gens.keys()]
@@ -170,13 +172,14 @@ def normalise(scale_list, generation_pairs, cores, out_dir):
 @click.command()
 @click.option('-i', '--input-file', help='Input VCF file.')
 @click.option('-c', '--cores', default=1, help='Number of processes to spawn.')
+@click.option('-C', '--chromosomes',  help='Chromosomes to analyse.')
 @click.option('-g', '--generations', type=list, default=['1', '2', '3'], help='Sample generations.')
 @click.option('-p', '--generation-pairs', type=list, default=['1_3', '2_3'], help='Sample generation pairs.')
 @click.option('-o', '--out-dir', default='results', help='Directory for output files.')
 @click.option('-t', '--temp-dir', default='tmp', help='Directory for temporary files.')
 @click.option('-G', '--generate-graphics', default=False, help='Generates graphics for each chromosome.')
 @click.option('--keep-temp', default=False, help='Do not delete temporary files.')
-def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir, keep_temp, generate_graphics):
+def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir, keep_temp, generate_graphics, chromosomes):
     """
     Tool used to calculate relative fitness of SNP mutations.\n
     """
@@ -186,10 +189,9 @@ def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir
     # get current time
     start_time = time.time()
 
-
     os.makedirs(temp_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
-    filter_and_split(input_file, generations, temp_dir, cores)
+    filter_and_split(input_file, generations, temp_dir, cores, chromosomes)
     print("Step 1 in: ", time.time() - start_time, " seconds.")
     scale_list = merge_and_compute(generation_pairs, cores, temp_dir, out_dir)
     print("Step 2 in: ", time.time() - start_time, " seconds.")
