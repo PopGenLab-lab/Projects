@@ -7,10 +7,9 @@ import os
 import matplotlib.pyplot as plt
 from cyvcf2 import VCF
 from multiprocessing import Pool
-from collections import defaultdict
+import re
 
-# --- Settings for temporary files ---
-GRAPHICS_OPACITY = 0.6
+GRAPHICS_OPACITY = 0.8
 GRAPHICS_POINT_SIZE = 4
 GRAPHICS_ENABLED = False
 
@@ -37,16 +36,22 @@ def list_to_dict_max(lst):
         max_dict[key] = max(max_dict.get(key, -float('inf')), value)
     return max_dict
 
-def parse_generations(samples, generations):
-    groups = defaultdict(list)
-    for sample in samples:
-        try:
-            gen = sample.split("-")[-1]
-            if gen in generations:
-                groups[gen].append(sample)
-        except IndexError:
-            pass
-    return dict(groups)
+def parse_generations(samples, generation_string):
+    if not generation_string.startswith("/") or not generation_string.endswith("/"):
+        raise ValueError("Generations must be formatted as /<id>/<regex>/<id>/<regex>/...")
+
+    parts = generation_string.strip("/").split("/")
+    if len(parts) % 2 != 0:
+        raise ValueError("Invalid generation format: must be /<id>/<regex>/<id>/<regex>/...")
+
+    gen_sample_map = {}
+    for i in range(0, len(parts), 2):
+        gen_id = parts[i]
+        regex = re.compile(parts[i + 1])
+        matching_samples = [sample for sample in samples if regex.search(sample)]
+        gen_sample_map[gen_id] = matching_samples
+
+    return gen_sample_map
 
 
 def compute_counts(variant):
@@ -78,8 +83,11 @@ def filter_split_unit(args):
 
 def filter_and_split(vcf_path, generations, temp_dir, cores, chromosomes=None):
     vcf = VCF(vcf_path, threads=cores)
-    # if chromosomes whitelist not provided
-    if not chromosomes:
+
+    if chromosomes:
+        chrom_pattern = re.compile(chromosomes)
+        chromosomes = [c for c in vcf.seqnames if chrom_pattern.search(c)]
+    else:
         chromosomes = vcf.seqnames
     gens = parse_generations(vcf.samples, generations)
 
@@ -176,9 +184,9 @@ def normalise(scale_list, generation_pairs, cores, out_dir):
 @click.command()
 @click.option('-i', '--input-file', help='Input VCF file.')
 @click.option('-c', '--cores', default=1, help='Number of processes to spawn.')
-@click.option('-C', '--chromosomes', callback=comma_separated,  help='Chromosomes to analyse.')
-@click.option('-g', '--generations', callback=comma_separated, default='1,2,3', help='Sample generations.')
-@click.option('-p', '--generation-pairs', callback=comma_separated, default='1_3,2_3', help='Sample generation pairs.')
+@click.option('-C', '--chromosomes', help='Regex pattern to match chromosome names (e.g., "^chr[0-9]+$").')
+@click.option('-g', '--generations', required=True, help='Sample generations in format: /<id>/<regex>/<id>/<regex>/...')
+@click.option('-p', '--generation-pairs', callback=comma_separated, default='1_3,2_3', help='Sample generation pairs by id (e.g., "1_3,2_3".')
 @click.option('-o', '--out-dir', default='results', help='Directory for output files.')
 @click.option('-t', '--temp-dir', default='tmp', help='Directory for temporary files.')
 @click.option('-G', '--generate-graphics', default=False, help='Generates graphics for each chromosome.')
@@ -206,3 +214,7 @@ def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir
         remove_dir_recursive(temp_dir)
 
     print("Done in ", time.time() - start_time, " seconds.")
+
+
+if __name__ == "__main__":
+    sys.exit(pyrelfit())
