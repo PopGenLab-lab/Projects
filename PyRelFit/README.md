@@ -14,6 +14,7 @@
 * **Graphics Support**: Optional scatter plots of normalized fitness values across chromosome positions.
 * **Parallel Processing**: Leverages Python’s `multiprocessing.Pool` to parallelize VCF filtering, merging, and normalization across cores.
 * **Optional Clean-up**: Temporary directories and files can be automatically removed or retained based on user preference.
+* **Outlier Grouping**: Optionally collects high RelativeFitness variants into grouped CSV files by threshold (>0.8, >0.6, >0.4, >0.2) for further analysis.
 
 ---
 
@@ -95,17 +96,18 @@ This command processes `input.vcf`, groups samples whose names match `^gen1_` in
 
 ### Options and Arguments
 
-| Option                | Shortcut | Description                                                               | Default   |
-|-----------------------|----------|---------------------------------------------------------------------------|-----------|
-| `--input-file`        | `-i`     | Path to the input VCF file (required).                                    |           |
-| `--generations`       | `-g`     | Generation specification string: `/id1/regex1/id2/regex2/...` (required). |           |
-| `--cores`             | `-c`     | Number of CPU cores to use for parallel processing.                       | `1`       |
-| `--chromosomes`       | `-C`     | Regex to filter chromosome names (e.g., `^chr[0-9]+$`).                   | All       |
-| `--generation-pairs`  | `-p`     | Comma-separated list of gen IDs to compare (e.g., `1_2,1_3`).             | `1_3,2_3` |
-| `--out-dir`           | `-o`     | Output directory for generated CSVs and optional plots.                   | `results` |
-| `--temp-dir`          | `-t`     | Temporary directory for intermediate CSVs.                                | `tmp`     |
-| `--generate-graphics` | `-G`     | Flag to enable generation of scatter-plot PNGs for each chromosome-pair.  | `False`   |
-| `--keep-temp`         | -        | Flag to retain temporary files after execution for debugging.             | `False`   |
+| Option                | Shortcut | Description                                                                                                                  | Default   |
+|-----------------------|----------|------------------------------------------------------------------------------------------------------------------------------|-----------|
+| `--input-file`        | `-i`     | Path to the input VCF file (required).                                                                                       |           |
+| `--generations`       | `-g`     | Generation specification string: `/id1/regex1/id2/regex2/...` (required).                                                    |           |
+| `--cores`             | `-c`     | Number of CPU cores to use for parallel processing.                                                                          | `1`       |
+| `--chromosomes`       | `-C`     | Regex to filter chromosome names (e.g., `^chr[0-9]+$`).                                                                      | All       |
+| `--generation-pairs`  | `-p`     | Comma-separated list of gen IDs to compare (e.g., `1_2,1_3`).                                                                | `1_3,2_3` |
+| `--out-dir`           | `-o`     | Output directory for generated CSVs and optional plots.                                                                      | `results` |
+| `--temp-dir`          | `-t`     | Temporary directory for intermediate CSVs.                                                                                   | `tmp`     |
+| `--outliers`          | `-O`     | Flag to enable grouping and output of high relative fitness (RF) mutations into separate CSV files (>0.8, >0.6, >0.4, >0.2). | `False`   |
+| `--generate-graphics` | `-G`     | Flag to enable generation of scatter-plot PNGs for each chromosome-pair.                                                     | `False`   |
+| `--keep-temp`         | -        | Flag to retain temporary files after execution for debugging.                                                                | `False`   |
 
 ### Generation String Syntax
 
@@ -170,12 +172,13 @@ The pipeline proceeds in three major steps:
 * **Function**: `merge_and_compute`
 * **Action**: For each generation pair (e.g. `1_2`), reads the two per-gen CSVs of each chromosome line-by-line, computes allele frequencies (`f1`, `f2`), then calculates a relative fitness weight `w = (f2^2) / (2*f1^2 - f1*f2^2)` under valid conditions.
 * **Output**: Writes `chrom.<gen1>_<gen2>.csv` with columns `Pos`, `Ref`, `Alt`, `RF`.
-* **Max Tracking**: Records maximum `w` per generation pair for later normalization.
+* **Max Tracking**: Records maximum `RF` per generation pair for later normalization.
 
-### Step 3: Normalization & Plotting
+### Step 3: Normalization, Grouping & Plotting
 
 * **Function**: `normalise`
 * **Action**: Scales each `RF` value by the maximum observed for that pair, yielding values in `[0, 1]`. If graphics are enabled, generates scatter plots (`.png`) of normalized `RF` vs position.
+* **Grouping**: When enabled, variants with high relative fitness (RF) values are categorized into groups and saved as separate CSV files. Group thresholds are: >0.8, >0.6, >0.4, and >0.2.
 * **Graphics**: Uses `matplotlib` with parameters `GRAPHICS_OPACITY`, `GRAPHICS_POINT_SIZE`.
 
 ---

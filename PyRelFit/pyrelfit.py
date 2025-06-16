@@ -12,6 +12,7 @@ import re
 GRAPHICS_OPACITY = 0.8
 GRAPHICS_POINT_SIZE = 4
 GRAPHICS_ENABLED = False
+OUTLIERS_ENABLED = False
 
 def comma_separated(ctx, param, value):
     return value.split(',')
@@ -147,11 +148,30 @@ def normalize_file(args):
             x_vals = []
             y_vals = []
 
+            if OUTLIERS_ENABLED:
+                outlier_groups = {
+                    "gt_8": [],
+                    "gt_6": [],
+                    "gt_4": [],
+                    "gt_2": []
+                }
+
             for row in reader:
                 row[-1] = float(row[-1]) / global_max
                 if GRAPHICS_ENABLED:
                     x_vals.append(float(row[0]))
                     y_vals.append(row[-1])
+
+                if OUTLIERS_ENABLED:
+                    out_entry = row.copy()
+                    if float(row[-1]) > 0.8:
+                        outlier_groups["gt_8"].append(out_entry)
+                    elif float(row[-1]) > 0.6:
+                        outlier_groups["gt_6"].append(out_entry)
+                    elif float(row[-1]) > 0.4:
+                        outlier_groups["gt_4"].append(out_entry)
+                    elif float(row[-1]) > 0.2:
+                        outlier_groups["gt_2"].append(out_entry)
 
                 writer.writerow(row)
 
@@ -168,6 +188,17 @@ def normalize_file(args):
                 plt.close()
 
         os.replace(f"{filename}.tmp", filename)
+
+    if OUTLIERS_ENABLED:
+        base_name = os.path.basename(filename)
+        out_dir = os.path.dirname(filename)
+
+        for group, entries in outlier_groups.items():
+            group_file = os.path.join(out_dir, f"{group}.{base_name}")
+            with open(group_file, "w", newline="") as gf:
+                group_writer = csv.writer(gf)
+                group_writer.writerow(header)
+                group_writer.writerows(entries)
 
 
 def normalise(scale_list, generation_pairs, cores, out_dir):
@@ -189,14 +220,16 @@ def normalise(scale_list, generation_pairs, cores, out_dir):
 @click.option('-p', '--generation-pairs', callback=comma_separated, default='1_3,2_3', help='Sample generation pairs by id (e.g., "1_3,2_3".')
 @click.option('-o', '--out-dir', default='results', help='Directory for output files.')
 @click.option('-t', '--temp-dir', default='tmp', help='Directory for temporary files.')
+@click.option('-O', '--outliers', default=False, help='Generate files with outlier relative fitness groups.')
 @click.option('-G', '--generate-graphics', default=False, help='Generates graphics for each chromosome.')
 @click.option('--keep-temp', default=False, help='Do not delete temporary files.')
-def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir, keep_temp, generate_graphics, chromosomes):
+def pyrelfit(input_file, generations, generation_pairs, cores, temp_dir, out_dir, keep_temp, generate_graphics, chromosomes, outliers):
     """
     Tool used to calculate relative fitness of SNP mutations.\n
     """
-    global GRAPHICS_ENABLED
+    global GRAPHICS_ENABLED, OUTLIERS_ENABLED
     GRAPHICS_ENABLED = generate_graphics
+    OUTLIERS_ENABLED = outliers
 
     # get current time
     start_time = time.time()
