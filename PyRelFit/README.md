@@ -125,7 +125,7 @@ This command processes `input.vcf`, groups samples whose names match `^gen1_` in
      --generations /wt/^WT_/mut/^MUT_/ \
      --generation-pairs wt_mut \
      --cores 8 \
-     --generate-graphics
+     --generate-graphics true
    ```
 
    * Splits `WT_` samples into `wt`, `MUT_` into `mut`.
