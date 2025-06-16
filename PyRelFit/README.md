@@ -107,7 +107,7 @@ This command processes `input.vcf`, groups samples whose names match `^gen1_` in
 | `--temp-dir`          | `-t`     | Temporary directory for intermediate CSVs.                                                                                   | `tmp`     |
 | `--outliers`          | `-O`     | Flag to enable grouping and output of high relative fitness (RF) mutations into separate CSV files (>0.8, >0.6, >0.4, >0.2). | `False`   |
 | `--generate-graphics` | `-G`     | Flag to enable generation of scatter-plot PNGs for each chromosome-pair.                                                     | `False`   |
-| `--keep-temp`         | -        | Flag to retain temporary files after execution for debugging.                                                                | `False`   |
+| `--keep-temp`         | *None*   | Flag to retain temporary files after execution for debugging.                                                                | `False`   |
 
 ### Generation String Syntax
 
@@ -213,4 +213,5 @@ The pipeline proceeds in three major steps:
 
 ## License
 
-TODO
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+
